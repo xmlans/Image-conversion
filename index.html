@@ -1,0 +1,163 @@
+<!-- By Star Dream -->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>title</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://img.xmlans.com/">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <!-- JSZip & FileSaver for batch download -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    body { background: radial-gradient(ellipse at center, #e0c3fc 0%, #8ec5fc 100%); min-height:100vh; overflow-x:hidden; }
+    .hero { background-attachment: fixed; background-position:center; background-size:cover; }
+    .reveal { opacity:0; transform:translateY(30px); transition:opacity .6s ease-out,transform .6s ease-out; }
+    .reveal.in-view { opacity:1; transform:translateY(0); }
+    .btn { position:relative; overflow:hidden; }
+    .btn .ripple { position:absolute; border-radius:50%; transform:scale(0); animation:ripple .6s linear; background:rgba(255,255,255,0.6); }
+    @keyframes ripple { to{transform:scale(4);opacity:0;} }
+    .upload-area { border:2px dashed #aaa; padding:2rem; border-radius:1rem; cursor:pointer; transition:border-color .3s; }
+    .upload-area:hover { border-color:#6b21a8; }
+    #progressContainer { display:none; width:100%; background:#e5e7eb; border-radius:9999px; height:.5rem; margin-top:.5rem; position:relative; }
+    #progressBar { height:100%; width:0; background:#8b5cf6; transition:width .2s; border-radius:9999px; }
+    #percentLabel { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:.875rem; color:#374151; }
+    #preview img { margin:.25rem; max-height:100px; border-radius:.5rem; }
+    footer { text-align:center; margin-top:2rem; font-size:.75rem; color:#9ca3af; }
+  </style>
+</head>
+<body class="hero flex items-center justify-center min-h-screen px-4 text-gray-800">
+  <div class="bg-white bg-opacity-90 backdrop-blur-lg shadow-xl rounded-3xl max-w-2xl w-full p-8 space-y-6 text-center reveal" data-reveal>
+    <h1 class="text-4xl sm:text-5xl font-bold text-purple-700 mb-4">图片格式转换器</h1>
+    <div id="upload" class="upload-area text-gray-500 reveal" data-reveal>
+      <p>点击或拖拽上传图片 (可多选，最多20张)</p>
+      <input id="fileInput" type="file" accept="image/*" class="hidden" multiple />
+    </div>
+    <div id="preview" class="reveal flex flex-wrap justify-center" data-reveal></div>
+    <div class="space-y-2 reveal" data-reveal>
+      <label for="format" class="block text-left text-gray-700">目标格式：</label>
+      <select id="format" class="w-full border border-gray-300 rounded p-2">
+        <option value="png">PNG</option>
+        <option value="jpeg">JPEG</option>
+        <option value="webp">WebP</option>
+        <option value="avif">AVIF</option>
+        <option value="tiff">TIFF</option>
+        <option value="gif">GIF</option>
+      </select>
+    </div>
+    <div id="qualityContainer" class="space-y-2 reveal hidden" data-reveal>
+      <label for="quality" class="block text-left text-gray-700">WebP 压缩率 (<span id="qualityValue">80</span>)：</label>
+      <input type="range" id="quality" min="1" max="100" value="80" class="w-full" />
+    </div>
+    <div class="flex justify-center gap-4 reveal" data-reveal>
+      <button id="convertBtn" class="btn bg-pink-400 hover:bg-pink-500 text-white py-2 px-6 rounded-full shadow transition disabled:opacity-50" disabled>转换</button>
+    </div>
+    <div id="progressContainer" class="reveal" data-reveal>
+      <div id="progressBar"></div>
+      <span id="percentLabel">0%</span>
+    </div>
+    <p id="msg" class="text-sm text-red-500 reveal" data-reveal>这是一项免费服务，由Star Dream™运营</p>
+    <footer>© 2025 Star Dream™ All rights reserved.</footer>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const MAX_FILES = 20;
+      const reveals = document.querySelectorAll('[data-reveal]');
+      const obs = new IntersectionObserver((entries) => {
+        entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in-view'); obs.unobserve(e.target); }});
+      }, { threshold: 0.2 }); reveals.forEach(el => obs.observe(el));
+
+      document.querySelectorAll('.btn').forEach(btn => btn.addEventListener('click', e => {
+        const c = document.createElement('span'), d = Math.max(btn.clientWidth, btn.clientHeight);
+        c.style.width = c.style.height = d + 'px'; c.className = 'ripple'; btn.appendChild(c);
+        const r = btn.getBoundingClientRect(); c.style.left = e.clientX - r.left - d/2 + 'px';
+        c.style.top = e.clientY - r.top - d/2 + 'px'; setTimeout(() => c.remove(), 600);
+      }));
+
+      const uploadArea = document.getElementById('upload'), fileInput = document.getElementById('fileInput');
+      const preview = document.getElementById('preview'), formatSelect = document.getElementById('format');
+      const qualityContainer = document.getElementById('qualityContainer'), qualityInput = document.getElementById('quality');
+      const qualityValue = document.getElementById('qualityValue'), convertBtn = document.getElementById('convertBtn');
+      const progressContainer = document.getElementById('progressContainer'), progressBar = document.getElementById('progressBar');
+      const percentLabel = document.getElementById('percentLabel'), msg = document.getElementById('msg');
+      let selectedFiles = [];
+
+      formatSelect.addEventListener('change', () => {
+        formatSelect.value === 'webp'
+          ? qualityContainer.classList.remove('hidden')
+          : qualityContainer.classList.add('hidden');
+      }); qualityInput.addEventListener('input', () => qualityValue.textContent = qualityInput.value);
+
+      function handleFile() {
+        const files = Array.from(fileInput.files);
+        if (!files.length) return;
+        if (files.length > MAX_FILES) {
+          msg.textContent = `最多只能上传 ${MAX_FILES} 张图片！`;
+          preview.innerHTML = '';
+          convertBtn.disabled = true;
+          return;
+        }
+        preview.innerHTML = '';
+        msg.textContent = '';
+        selectedFiles = files.filter(f => f.type.startsWith('image/'));
+        if (!selectedFiles.length) { msg.textContent = '请选择图片文件！'; return; }
+        selectedFiles.forEach(file => {
+          const rd = new FileReader();
+          rd.onload = e => { const img = document.createElement('img'); img.src = e.target.result; preview.appendChild(img); };
+          rd.readAsDataURL(file);
+        });
+        convertBtn.disabled = false;
+        convertBtn.textContent = selectedFiles.length > 1 ? '批量转换' : '转换';
+      }
+
+      uploadArea.addEventListener('click', () => fileInput.click());
+      uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('border-purple-600'); });
+      uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('border-purple-600'));
+      uploadArea.addEventListener('drop', e => { e.preventDefault(); uploadArea.classList.remove('border-purple-600'); fileInput.files = e.dataTransfer.files; handleFile(); });
+      fileInput.addEventListener('change', handleFile);
+
+      convertBtn.addEventListener('click', () => {
+        if (!selectedFiles.length) return;
+        convertBtn.disabled = true; msg.textContent = '';
+        progressContainer.style.display = 'block';
+        let completed = 0, total = selectedFiles.length;
+        progressBar.style.width = '0%'; percentLabel.textContent = '0%';
+        const zip = new JSZip();
+        selectedFiles.forEach(file => {
+          const xhr = new XMLHttpRequest(); xhr.open('POST', '/convert'); xhr.responseType = 'blob';
+          xhr.onload = () => {
+            if (xhr.status === 200) {
+              const blob = xhr.response; let ext = formatSelect.value;
+              if (total > 1) {
+                zip.file(file.name.replace(/\.[^.]+$/, '') + '.' + ext, blob);
+              } else {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url;
+                a.download = selectedFiles[0].name.replace(/\.[^.]+$/, '') + '.' + ext;
+                document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+              }
+            }
+            completed++;
+            const pct = Math.round(completed / total * 100);
+            progressBar.style.width = pct + '%'; percentLabel.textContent = pct + '%';
+            if (completed === total) {
+              if (total > 1) {
+                zip.generateAsync({ type: 'blob' }).then(content => { saveAs(content, 'converted_images.zip'); msg.textContent = '批量下载已开始'; });
+              }
+              convertBtn.disabled = false;
+            }
+          };
+          const form = new FormData(); form.append('file', file); form.append('format', formatSelect.value);
+          if (formatSelect.value === 'webp') form.append('quality', qualityInput.value);
+          xhr.send(form);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
